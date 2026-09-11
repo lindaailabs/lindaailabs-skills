@@ -17,6 +17,7 @@
 | `use_case` | 对应模型池的 `use_case`（如 `simple_task`） |
 | `description` | 能力描述（作为 LLM 工具说明） |
 | `trigger` | 触发条件描述 |
+| `required_args` | 执行前必须补齐的参数列表；缺失时 agent 会先澄清 |
 
 ### executor.py 示例
 ```python
@@ -30,4 +31,9 @@ def execute(state: dict) -> dict:
 
 ## 现有 Skill
 - `check_disk_usage`（risk: low）：查看磁盘使用率。
-- `disk_cleanup`（risk: high）：高危清理，演示期仅只读枚举，需审批后执行。
+- `disk_cleanup`（risk: high）：清理前 dry-run，占用统计只读枚举；自动触发需审批后执行。
+
+## 可用性约定
+- executor 应自行校验关键参数，即使上层 agent 已做澄清，也不要在缺参时悄悄套默认清理路径。
+- 拼接 shell 命令时必须先转义用户输入；优先保持 Phase 1 dry-run，确认日志、回滚、审批链路后再接入真实删除动作。
+- `host` 当前仅作为目标主机标识透传；Phase 1 默认 `LocalExecutor` 在本机执行，SSH 后端接入后再按 host 路由。
