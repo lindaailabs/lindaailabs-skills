@@ -4,6 +4,8 @@ risk: high
 use_case: simple_task
 description: 清理目标主机磁盘空间（高危，必须经人工审批后执行）
 trigger: 当用户要求清理磁盘、删除日志、释放空间、清理临时文件时触发
+required_args:
+  - path
 ---
 # disk_cleanup
 
