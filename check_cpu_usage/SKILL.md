@@ -12,7 +12,7 @@ parameters:
 ---
 # check_cpu_usage
 
-通过同仓库 `_shared/linux_probe.py` 和 Agent 的 `run_local_probe` 执行，只读，依赖 Linux、Python 和 psutil>=6,<8。默认 LocalExecutor；远程 host 返回不支持，不会伪装成远程结果。
+通过同仓库 `_shared/linux_probe.py` 和 Agent 的 `run_local_probe` 执行，只读，依赖 Linux / macOS（Darwin）、Python 和 psutil>=6,<8；跨平台实现，不调用任何 Linux 专属命令。默认 LocalExecutor；远程 host 返回不支持，不会伪装成远程结果。
 
 服务名来自 JAR 文件名或 Java 主类，是进程身份线索，不保证等于业务名称。仅保留身份和白名单 JVM 参数，不输出完整命令行或环境变量。
 

@@ -1,4 +1,6 @@
-"""Read-only Linux process probes. No raw command lines leave this module."""
+"""Read-only cross-platform process probes (Linux / macOS). Built on psutil so it
+does not shell out to Linux-only tools (free, GNU ps, /proc). No raw command lines
+leave this module."""
 import ipaddress
 import json
 import os
@@ -14,6 +16,16 @@ import psutil
 
 def clean(value):
     return "".join(c for c in str(value) if c.isprintable())[:180]
+
+
+def _format_etime(seconds):
+    seconds = int(seconds)
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days:
+        return f"{days}-{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def java_identity(argv):
@@ -122,8 +134,9 @@ def cpu_sample(target=""):
     selected = select_target(rows, target) if target else []
     return {"cpu_count": psutil.cpu_count() or 1,
             "sample_seconds": round(time.monotonic() - before, 2),
-            "busy_percent": round(max(0, 100 - system.idle - system.iowait), 1),
-            "iowait_percent": system.iowait, "steal_percent": system.steal,
+            "busy_percent": round(max(0, 100 - system.idle - getattr(system, "iowait", 0.0)), 1),
+            "iowait_percent": getattr(system, "iowait", 0.0),
+            "steal_percent": getattr(system, "steal", 0.0),
             "load_average": list(os.getloadavg()), "processes": rows[:10],
             "target": clean(target), "selected": selected[:20],
             "inaccessible_processes": denied}
@@ -209,9 +222,71 @@ def service_health(target, url=""):
     return result
 
 
+def memory_sample():
+    """Read-only system memory + per-Java-process memory/CPU snapshot (psutil)."""
+    java_procs = []
+    for proc in psutil.process_iter():
+        try:
+            if proc.name() in ("java", "javaw"):
+                proc.cpu_percent(None)  # prime the per-process CPU baseline
+                java_procs.append(proc)
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+    time.sleep(0.3)  # let the primed baselines accumulate a small delta
+    processes = []
+    denied = 0
+    for proc in java_procs:
+        try:
+            with proc.oneshot():
+                info = describe(proc)
+                info["pmem"] = proc.memory_percent()
+                info["pcpu"] = proc.cpu_percent(None)
+                info["etime"] = _format_etime(info["uptime_seconds"])
+            processes.append(info)
+        except psutil.AccessDenied:
+            denied += 1
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+    processes.sort(key=lambda row: row.get("rss_bytes", 0), reverse=True)
+    vm = psutil.virtual_memory()
+    sm = psutil.swap_memory()
+    return {
+        "mem_total_bytes": vm.total,
+        "mem_used_bytes": vm.used,
+        "mem_available_bytes": getattr(vm, "available", 0),
+        "mem_percent": vm.percent,
+        "swap_total_bytes": sm.total,
+        "swap_used_bytes": sm.used,
+        "swap_percent": sm.percent,
+        "processes": processes,
+        "inaccessible_processes": denied,
+    }
+
+
+def disk_usage_sample():
+    """Read-only disk usage per mount point (psutil). Skips zero-size pseudo mounts."""
+    partitions = []
+    for part in psutil.disk_partitions(all=False):
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+        except (PermissionError, OSError):
+            continue
+        if usage.total == 0:
+            continue
+        percent = int(usage.used / usage.total * 100 + 0.5)
+        partitions.append({
+            "filesystem": part.device,
+            "mountpoint": part.mountpoint,
+            "size_bytes": usage.total,
+            "used_bytes": usage.used,
+            "available_bytes": usage.free,
+            "percent": percent,
+        })
+    partitions.sort(key=lambda row: row["percent"], reverse=True)
+    return {"partitions": partitions}
+
+
 def run(operation, args):
-    if sys.platform != "linux":
-        raise ValueError("Linux is required")
     if args.get("host", "localhost") not in ("localhost", "127.0.0.1", "::1"):
         raise ValueError("only localhost is supported; SSH is not configured")
     target = args.get("target", "")
@@ -230,6 +305,10 @@ def run(operation, args):
         if not target.strip():
             raise ValueError("target is required: Java PID, JAR or main class")
         data = service_health(target, url)
+    elif operation == "check_memory_usage":
+        data = memory_sample()
+    elif operation == "check_disk_usage":
+        data = disk_usage_sample()
     else:
         raise ValueError("unknown operation")
     return {"returncode": 0, "probe": operation, "host": "localhost",

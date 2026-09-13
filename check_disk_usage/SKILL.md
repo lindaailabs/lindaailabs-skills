@@ -8,5 +8,5 @@ required_args: []
 ---
 # check_disk_usage
 
-只读操作：在目标主机执行 `df -h`，返回各挂载点使用率。
+通过同仓库 `_shared/linux_probe.py` 执行，只读，依赖 Linux / macOS 与 psutil，不执行 `df`。返回各挂载点使用率，并自动跳过容量为 0 的伪挂载（如 devfs），避免误报 100%。
 风险等级 `low`，无需人工审批，直接执行。
